@@ -1,6 +1,6 @@
 /* Keeps the app working offline. Online it fetches the newest files first (3 s limit),
    so a new upload to GitHub Pages shows up on the next launch. Google API calls are never cached. */
-const CACHE = "life-dashboard-v1";
+const CACHE = "life-dashboard-v2";
 const FILES = [
   "./", "./index.html", "./manifest.webmanifest", "./css/app.css",
   "./js/app.js", "./js/store.js", "./js/ui.js", "./js/charts.js", "./js/google.js",
@@ -20,7 +20,7 @@ self.addEventListener("fetch", e => {
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try {
-      const net = await Promise.race([fetch(e.request), new Promise((_, rej) => setTimeout(() => rej("timeout"), 3000))]);
+      const net = await Promise.race([fetch(e.request, { cache: "no-cache" }), new Promise((_, rej) => setTimeout(() => rej("timeout"), 3000))]);
       if (net && net.ok) cache.put(e.request, net.clone());
       return net;
     } catch {

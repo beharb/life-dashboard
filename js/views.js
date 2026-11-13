@@ -12,15 +12,16 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const greeting = () => { const h = new Date().getHours(); return h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
 
 /* ================= TODAY ================= */
-function taskRow(t, { showDue = true } = {}) {
+function taskRow(t, { showDue = true, star = false } = {}) {
   const d = today();
-  const due = t.due ? `<span class="${!t.done && t.due < d ? "overdue" : ""}">${relDay(t.due)}${t.time ? " " + t.time : ""}</span>` : "";
+  const late = !t.done && t.due && t.due < d;
+  const due = t.due && showDue && (t.due !== d || t.time) ? `<span class="${late ? "overdue" : ""}">${late ? "Overdue · " : ""}${relDay(t.due)}${t.time ? " " + t.time : ""}</span>` : "";
   const proj = t.projectId && byId("projects", t.projectId);
+  const pri = t.pri && t.pri < 3 ? ` p${t.pri}` : "";
   return `<div class="item ${t.done ? "done" : ""}">
-    <button class="check ${t.done ? "on" : ""}" data-act="toggleTask" data-id="${t.id}" aria-label="Done"></button>
+    <button class="check${pri} ${t.done ? "on" : ""}" data-act="toggleTask" data-id="${t.id}" aria-label="Mark done"></button>
     <div class="grow tap" data-act="editTask" data-id="${t.id}"><div class="t">${esc(t.title)}</div>
-      <div class="meta">${showDue ? due : ""}${t.tag ? `<span class="tag">${esc(t.tag)}</span>` : ""}${proj ? `<span>${esc(proj.name)}</span>` : ""}</div></div>
-    ${t.pri && t.pri < 3 ? `<span class="pri p${t.pri}"></span>` : ""}
+      ${star || due || t.tag || proj || pri ? `<div class="meta">${star ? '<span class="star">TOP 3</span>' : ""}${pri && !t.done ? `<span class="flag${pri}">${t.pri === 1 ? "High" : "Medium"}</span>` : ""}${due}${t.tag ? `<span class="tag">${esc(t.tag)}</span>` : ""}${proj ? `<span>${esc(proj.name)}</span>` : ""}</div>` : ""}</div>
   </div>`;
 }
 function eventRow(e, date) {
@@ -30,62 +31,77 @@ function eventRow(e, date) {
 }
 
 export function renderToday(v) {
-  const d = today(), now = new Date(), c = S.checkins[d] || {};
+  const d = today(), now = new Date(), h = now.getHours(), c = S.checkins[d] || {};
+  const nowHm = `${String(h).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   const evs = eventsOn(d);
-  const upcoming = evs.filter(e => e.allDay || e.end >= `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}` || !e.end);
+  const upcoming = evs.filter(e => e.allDay || (e.end || e.start) >= nowHm);
+  const nextEv = evs.find(e => !e.allDay && e.start >= nowHm);
+  const top = topToday(), topIds = new Set(top.map(t => t.id));
   const due = tasksDue(d), od = overdue();
-  const open = [...od, ...due.filter(t => !t.done)], closed = due.filter(t => t.done);
-  const doneToday = doneOn(d).length;
-  const top = topToday();
-  const hs = habitsFor(d), hDone = hs.filter(h => habitDone(h, d)).length;
+  const rest = [...od, ...due.filter(t => !t.done), ...due.filter(t => t.done)].filter(t => !topIds.has(t.id));
+  const doneToday = doneOn(d).length, openToday = [...top, ...rest].filter(t => !t.done).length;
+  const hs = habitsFor(d), hDone = hs.filter(x => habitDone(x, d)).length;
   const fm = focusOn(d), goal = S.settings.focusGoal;
-  const projs = projectsActive().filter(p => p.deadline && diffDays(d, p.deadline) <= 7).slice(0, 3);
-  const evening = now.getHours() >= 17;
-  const imp = upcomingImportant(30).filter(e => e.on !== d).slice(0, 3);
+  const timer = getTimer();
+  const arrow = '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
+
+  // the one thing to do next
+  let hero;
+  if (timer) hero = `<button class="hero" data-act="focus"><div><div class="k">Focus session</div><div class="t">${esc(timer.label || "Deep work")} · <span id="tCard">${fmtClock(remaining(timer))}</span></div><div class="s">${timer.paused ? "Paused" : "In progress"}</div></div><span class="go">${arrow}</span></button>`;
+  else if (c.done) hero = `<button class="hero soft" data-act="fbOpen" data-d="${d}"><div class="ring" style="width:52px;height:52px">${ring((c.score || 0) / 100, 52, 5)}<div class="n" style="font-size:16px">${c.score ?? "–"}</div></div><div><div class="k">Day reviewed</div><div class="t">See your feedback</div><div class="s">What went well, and what to improve</div></div><span class="go">${arrow}</span></button>`;
+  else if (h >= 17) hero = `<button class="hero" data-act="ciOpen"><div><div class="k">Evening check-in</div><div class="t">How was your day?</div><div class="s">2 minutes, then honest feedback</div></div><span class="go">${arrow}</span></button>`;
+  else if (!top.length) hero = `<button class="hero" data-act="morning"><div><div class="k">Start here</div><div class="t">Plan your day</div><div class="s">Pick the 3 tasks that would make today a win</div></div><span class="go">${arrow}</span></button>`;
+  else if (nextEv) hero = `<button class="hero soft" data-act="openEvent" data-id="${esc(nextEv.id)}" data-date="${d}"><div><div class="k">Next up · ${nextEv.start}</div><div class="t">${esc(nextEv.title)}</div><div class="s">${untilText(nextEv.start)}${nextEv.location ? " · " + esc(nextEv.location) : ""}</div></div><span class="go">${arrow}</span></button>`;
+  else hero = `<button class="hero soft" data-act="focus"><div><div class="k">Nothing else scheduled</div><div class="t">Start a focus session</div><div class="s">${fmtMin(fm)} of ${fmtMin(goal)} so far today</div></div><span class="go">${arrow}</span></button>`;
+
+  const prog = (pct, big, label, sub, act) => `<div class="prog" data-act="go" data-to="${act}"><div class="rg">${ring(pct, 54, 5, "var(--accent)")}<b>${big}</b></div><div class="l">${label}<small>${sub}</small></div></div>`;
+  const total = doneToday + openToday;
 
   v.innerHTML = `
-  <p class="hello">${greeting()} · ${fmtDate(d, { weekday: "long", month: "long", day: "numeric" })}</p>
-  ${c.intention ? `<div class="sub" style="margin-bottom:6px">Intention: <b style="color:var(--ink)">${esc(c.intention)}</b></div>` : ""}
-  <div class="tiles" style="margin-top:12px">
-    <div class="tile"><div class="k">Tasks</div><div class="v">${doneToday}<small> / ${doneToday + open.length - od.length}</small></div><div class="d">${od.length ? `<span class="down">${od.length} overdue</span>` : "done today"}</div></div>
-    <div class="tile"><div class="k">Focus</div><div class="v">${fmtMin(fm)}</div><div class="d">goal ${fmtMin(goal)}</div></div>
-    <div class="tile"><div class="k">Habits</div><div class="v">${hDone}<small> / ${hs.length}</small></div><div class="d">today</div></div>
-    <div class="tile"><div class="k">Check-in streak</div><div class="v">${checkinStreak()}<small> days</small></div><div class="d">${c.score != null ? `today's score ${c.score}` : "keep it going"}</div></div>
+  ${c.intention ? `<div class="sub" style="margin:2px 0 8px">Today's intention: <b style="color:var(--ink)">${esc(c.intention)}</b></div>` : ""}
+  ${hero}
+  <div class="progress">
+    ${prog(total ? doneToday / total : 0, `${doneToday}/${total}`, "Tasks", od.length ? `<span class="overdue">${od.length} overdue</span>` : "done", "tasks")}
+    ${prog(goal ? fm / goal : 0, fm >= 60 ? Math.floor(fm / 60) + "h" : Math.round(fm) + "m", "Focus", `goal ${fmtMin(goal)}`, "stats")}
+    ${prog(hs.length ? hDone / hs.length : 0, `${hDone}/${hs.length}`, "Habits", checkinStreak() ? `${checkinStreak()}-day streak` : "today", "tasks/habits")}
   </div>
 
-  ${evening && !c.done ? `<div class="card" style="margin-top:14px"><div class="spread"><div><h3>How was your day?</h3><div class="sub">14 quick questions, then honest feedback.</div></div><button class="btn sm" data-act="ciOpen">Start</button></div></div>` : ""}
-  ${c.done ? `<div class="card tap" style="margin-top:14px" data-act="fbOpen" data-d="${d}"><div class="score"><div class="ring" style="width:56px;height:56px">${ring((c.score || 0) / 100, 56, 6)}<div class="n" style="font-size:17px">${c.score ?? "–"}</div></div><div class="grow"><h3>Today's review</h3><div class="sub">Tap to see what went well and what to improve.</div></div></div></div>` : ""}
+  <div class="sec"><h2>Tasks${openToday ? `<span class="count">${openToday}</span>` : ""}</h2><button class="link" data-act="morning">${top.length ? "Edit top 3" : "Pick top 3"}</button></div>
+  <div class="list">
+    ${top.map(t => taskRow(t, { star: true })).join("")}
+    ${rest.map(t => taskRow(t)).join("")}
+    <div class="add-row"><span class="plus">+</span><input id="qTask" placeholder="Add a task for today" enterkeyhint="done"></div>
+  </div>
 
-  <div class="sec"><h2>Top 3</h2><button class="link" data-act="morning">${top.length ? "Edit" : "Plan"}</button></div>
-  ${top.length ? `<div class="list">${top.map(t => taskRow(t)).join("")}</div>` : `<div class="card tap" data-act="morning"><h3>Plan your day</h3><div class="sub">Pick the 3 tasks that would make today a win.</div></div>`}
+  <div class="sec"><h2>Schedule</h2><button class="link" data-act="newEvent" data-d="${d}">+ Event</button></div>
+  ${upcoming.length ? `<div class="list">${upcoming.map(e => eventRow(e, d)).join("")}</div>` : `<div class="empty-card"><span>Nothing else on your calendar today.</span><button class="btn sm ghost" data-act="go" data-to="calendar">Calendar</button></div>`}
 
-  <div class="sec"><h2>Schedule</h2><button class="link" data-act="go" data-to="calendar">Calendar</button></div>
-  ${upcoming.length ? `<div class="list">${upcoming.map(e => eventRow(e, d)).join("")}</div>` : `<div class="empty">Nothing else on the calendar today.</div>`}
+  <div class="sec"><h2>Habits</h2><button class="link" data-act="${hs.length ? "go" : "qaHabit"}" data-to="tasks/habits">${hs.length ? "Manage" : "+ Habit"}</button></div>
+  ${hs.length ? `<div class="chips">${hs.map(x => `<button class="hab-chip" data-act="toggleHabit" data-id="${x.id}"><span class="check ${habitDone(x, d) ? "on" : ""}"></span>${esc(x.name)}${habitStreak(x) >= 2 ? ` <span class="muted small">${habitStreak(x)}d</span>` : ""}</button>`).join("")}</div>` : `<div class="empty-card"><span>Track small daily habits and build streaks.</span></div>`}
 
-  <div class="sec"><h2>Due</h2><button class="link" data-act="go" data-to="tasks">All tasks</button></div>
-  <div class="qadd"><input id="qTask" placeholder="Add task… try “Export teaser tomorrow !1 #client”" enterkeyhint="done"></div>
-  ${open.length || closed.length ? `<div class="list">${[...open, ...closed].filter(t => !top.includes(t)).map(t => taskRow(t)).join("") || '<div class="empty" style="padding:14px">All in your top 3.</div>'}</div>` : `<div class="empty">Nothing due today.</div>`}
+  ${comingUp(d)}
 
-  ${hs.length ? `<div class="sec"><h2>Habits</h2><button class="link" data-act="go" data-to="tasks/habits">Manage</button></div>
-  <div class="chips">${hs.map(h => `<button class="hab-chip" data-act="toggleHabit" data-id="${h.id}"><span class="check ${habitDone(h, d) ? "on" : ""}"></span>${esc(h.name)}${habitStreak(h) >= 2 ? ` <span class="muted small">${habitStreak(h)}d</span>` : ""}</button>`).join("")}</div>` : ""}
-
-  <div class="sec"><h2>Focus</h2></div>
-  ${timerCard()}
-
-  ${projs.length ? `<div class="sec"><h2>Deadlines this week</h2><button class="link" data-act="go" data-to="tasks/projects">Projects</button></div><div class="list">${projs.map(p => { const l = diffDays(d, p.deadline); return `<div class="item tap" data-act="editProject" data-id="${p.id}"><div class="grow"><div class="t">${esc(p.name)}</div><div class="meta"><span>${STAGES[p.stage || 0]}</span>${p.client ? `<span>${esc(p.client)}</span>` : ""}</div></div><span class="small ${l <= 1 ? "overdue" : "muted"}">${l < 0 ? `${-l}d late` : l === 0 ? "today" : `${l}d`}</span></div>`; }).join("")}</div>` : ""}
-
-  ${imp.length ? `<div class="sec"><h2>Coming up</h2></div><div class="list">${imp.map(e => `<div class="item tap" data-act="openEvent" data-id="${esc(e.id)}" data-date="${e.on}"><div class="grow"><div class="t">★ ${esc(e.title)}</div></div><span class="small muted">${relDay(e.on)}</span></div>`).join("")}</div>` : ""}
-
-  ${!evening && !c.done ? `<div style="margin-top:18px"><button class="btn ghost block" data-act="ciOpen">Do today's check-in early</button></div>` : ""}
-  `;
+  <div class="duo">
+    ${timer ? "" : `<button class="btn ghost" data-act="focus">${icon.play} Focus</button>`}
+    ${c.done ? "" : `<button class="btn ghost" data-act="ciOpen">Check-in</button>`}
+  </div>`;
   const q = $("#qTask");
-  q.addEventListener("keydown", e => { if (e.key === "Enter" && q.value.trim()) { addParsedTask(q.value, today()); q.value = ""; } });
+  q.addEventListener("keydown", e => { if (e.key === "Enter" && q.value.trim()) { addParsedTask(q.value, today()); } });
 }
 
-function timerCard() {
-  const t = getTimer();
-  if (!t) return `<div class="card"><div class="spread"><div><h3>Deep work</h3><div class="sub">Start a timed session. It's logged to your focus stats.</div></div><button class="btn sm" data-act="focus">${icon.play.replace('class="ico"', 'class="ico" style="width:16px;height:16px"')}</button></div></div>`;
-  return `<div class="card tap" data-act="focus"><div class="spread"><div><h3>${esc(t.label || "Focus")} · <span id="tCard">${fmtClock(remaining(t))}</span></h3><div class="sub">${t.paused ? "Paused" : "In progress"}. Tap to open.</div></div></div></div>`;
+function untilText(start) {
+  const [hh, mm] = start.split(":").map(Number), t = new Date(); t.setHours(hh, mm, 0, 0);
+  const m = Math.round((t - Date.now()) / 60e3);
+  return m <= 0 ? "Now" : m < 60 ? `In ${m} min` : `In ${fmtMin(m)}`;
+}
+
+function comingUp(d) {
+  const items = [
+    ...projectsActive().filter(p => p.deadline && diffDays(d, p.deadline) <= 7).map(p => ({ on: p.deadline, title: p.name, sub: `${STAGES[p.stage || 0]}${p.client ? " · " + esc(p.client) : ""}`, act: `data-act="editProject" data-id="${p.id}"`, kind: "Deadline" })),
+    ...upcomingImportant(30).filter(e => e.on !== d).map(e => ({ on: e.on, title: e.title, sub: "Important date", act: `data-act="openEvent" data-id="${esc(e.id)}" data-date="${e.on}"`, kind: "★" })),
+  ].sort((a, b) => a.on.localeCompare(b.on)).slice(0, 5);
+  if (!items.length) return "";
+  return `<div class="sec"><h2>Coming up</h2></div><div class="list">${items.map(x => { const l = diffDays(d, x.on); return `<div class="item tap" ${x.act}><div class="grow"><div class="t">${esc(x.title)}</div><div class="meta"><span>${x.kind === "★" ? "★ " : ""}${x.sub}</span></div></div><span class="small ${l <= 1 ? "overdue" : "muted"}">${l < 0 ? `${-l}d late` : l === 0 ? "Today" : l === 1 ? "Tomorrow" : `in ${l}d`}</span></div>`; }).join("")}</div>`;
 }
 
 /* ---- quick task parsing ---- */
@@ -110,6 +126,7 @@ function addParsedTask(text, base) {
   if (!p.title) return;
   upsert("tasks", { ...p, done: 0 });
   toast(`Added${p.due ? " · " + relDay(p.due) : ""}`);
+  requestAnimationFrame(() => requestAnimationFrame(() => { const q = document.getElementById("qTask"); if (q) { q.value = ""; q.focus(); } }));
 }
 
 /* ================= CALENDAR ================= */
@@ -132,7 +149,8 @@ export function renderCalendar(v) {
       return `<button class="d ${d.slice(0, 7) !== state.calMonth ? "out" : ""} ${d === today() ? "today" : ""} ${d === sel ? "sel" : ""}" data-act="calSel" data-d="${d}"><span>${+d.slice(8)}</span><div class="dots">${dots}</div></button>`;
     }).join("")}
   </div>
-  <div class="small muted" style="margin:8px 2px 0">${gOn ? `Google Calendar synced ${S.gcache.fetched ? timeAgo(S.gcache.fetched) : "never"} · <a href="#" data-act="gRefresh" style="color:var(--accent)">refresh</a>` : G.everConnected() || S.settings.clientId ? `Google session expired · <a href="#" data-act="gconnect" style="color:var(--accent)">reconnect</a>` : `Google Calendar not connected · <a href="#" data-act="settings" style="color:var(--accent)">set up</a>`}</div>
+  <div class="cal-legend"><span><i style="background:var(--accent)"></i>Event</span><span><i style="background:var(--bad)"></i>Important</span><span><i style="background:var(--muted)"></i>Task due</span></div>
+  <div class="small muted" style="margin:6px 2px 0">${gOn ? `Google Calendar synced ${S.gcache.fetched ? timeAgo(S.gcache.fetched) : "never"} · <a href="#" data-act="gRefresh" style="color:var(--accent)">refresh</a>` : G.everConnected() || S.settings.clientId ? `Google session expired · <a href="#" data-act="gconnect" style="color:var(--accent)">reconnect</a>` : `Google Calendar not connected · <a href="#" data-act="settings" style="color:var(--accent)">set up</a>`}</div>
 
   <div class="sec"><h2>${relDay(sel)} · ${fmtDate(sel, { month: "short", day: "numeric" })}</h2><button class="link" data-act="newEvent" data-d="${sel}">+ Event</button></div>
   ${evs.length ? `<div class="list">${evs.map(e => eventRow(e, sel)).join("")}</div>` : `<div class="empty">No events.</div>`}
@@ -160,7 +178,7 @@ export function renderTasks(v) {
   const groups = {};
   if (f === "upcoming") list.forEach(t => (groups[t.due] = groups[t.due] || []).push(t));
   sv.innerHTML = `
-  <div class="qadd"><input id="qTask" placeholder="Add task… “Color grade fri !1 #promo @14:00”" enterkeyhint="done"></div>
+  <div class="qadd"><input id="qTask" placeholder="Add a task…" enterkeyhint="done"></div>
   <div class="chips" style="margin-bottom:12px">${[["today", "Today"], ["upcoming", "Upcoming"], ["someday", "No date"], ["done", "Done"]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-act="taskFilter" data-f="${k}">${l}</button>`).join("")}</div>
   ${f === "upcoming" ? Object.entries(groups).map(([day, ts]) => `<div class="sec"><h2>${relDay(day)}</h2></div><div class="list">${ts.map(t => taskRow(t, { showDue: false })).join("")}</div>`).join("") || '<div class="empty">Nothing scheduled ahead.</div>'
     : list.length ? `<div class="list">${list.map(t => taskRow(t)).join("")}</div>` : `<div class="empty">${f === "today" ? "Inbox zero for today." : "Nothing here."}</div>`}

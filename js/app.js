@@ -5,7 +5,7 @@ import * as G from "./google.js";
 import * as N from "./notify.js";
 import { openCheckin } from "./checkin.js";
 
-const TITLES = { today: "Today", calendar: "Calendar", tasks: "Plan", notes: "Notes", stats: "Insights" };
+const TITLES = { today: "Today", calendar: "Calendar", tasks: "Tasks", notes: "Notes", stats: "Insights" };
 const RENDER = { today: V.renderToday, calendar: V.renderCalendar, tasks: V.renderTasks, notes: V.renderNotes, stats: V.renderStats };
 
 function route() {
@@ -23,6 +23,7 @@ function render() {
   raf = requestAnimationFrame(() => {
     $$(".tabs a").forEach(a => a.classList.toggle("on", a.dataset.tab === V.state.tab));
     $("#topTitle").textContent = TITLES[V.state.tab];
+    $("#topSub").textContent = V.state.tab === "today" ? new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "";
     const pill = $("#gPill");
     pill.classList.toggle("hidden", G.connected() || !(G.everConnected() || S.settings.clientId));
     pill.textContent = G.everConnected() ? "Reconnect Google" : "Connect Google";
